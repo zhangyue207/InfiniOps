@@ -93,12 +93,18 @@ def skip_unsupported_dtypes(request):
 @pytest.fixture(autouse=True)
 def skip_op_without_platform_impl(request):
     """Skip `device=<torch_type>` parametrizations when the op has no
-    implementation on any of the corresponding platforms.
+    implementation on the corresponding platform.
 
     Only runs for tests that parametrize `device` but not
     `implementation_index` — joint `(device, impl_idx)` parametrize in
     `pytest_generate_tests` already prunes empty-impl pairs at collection
     time, making this check redundant (and wasteful) on those tests.
+
+    Hardcoded `device` parametrize (e.g. `("npu",)`) on a build that
+    doesn't include that backend skips early instead of crashing in the
+    C++ dispatcher: the cross-build-platform mapping is owned by
+    `DeviceTypeFromString`'s `TorchNameMap` which only enumerates
+    locally-built devices, so we pre-filter against `get_available_devices()`.
     """
     if not hasattr(request.node, "callspec"):
         return
@@ -108,22 +114,22 @@ def skip_op_without_platform_impl(request):
     if "implementation_index" in params:
         return
 
-    device_selectors = _active_device_selectors_for_torch_device(
-        request.config, params.get("device")
-    )
+    device = params.get("device")
 
-    if not device_selectors:
+    if device is None:
         return
+
+    if device not in get_available_devices():
+        pytest.skip(f"`{device}` not available in this build")
 
     op_cls = _op_class_from_module(request.node.module)
 
     if op_cls is None or not hasattr(op_cls, "active_implementation_indices"):
         return
 
-    if not any(op_cls.active_implementation_indices(d) for d in device_selectors):
+    if not op_cls.active_implementation_indices(device):
         pytest.skip(
-            f"{op_cls.__name__} has no implementation on any "
-            f"`{params.get('device')}`-mapped platform/device"
+            f"{op_cls.__name__} has no implementation for device `{device}`"
         )
 
 
@@ -140,26 +146,6 @@ _PLATFORM_TO_TORCH_DEVICE = {
     "cambricon": "mlu",
     "ascend": "npu",
 }
-
-
-def _active_device_selectors_for_torch_device(config, torch_device):
-    """Return platform or torch device names selected for a torch device type."""
-    if not torch_device:
-        return ()
-
-    cli_devices = config.getoption("--devices") or ()
-    requested_platforms = tuple(
-        name
-        for name in cli_devices
-        if _PLATFORM_TO_TORCH_DEVICE.get(name) == torch_device
-    )
-
-    if requested_platforms:
-        return requested_platforms
-
-    # The pybind layer maps torch device names (e.g. "cuda") to the backend
-    # compiled into the current wheel, avoiding probes of inactive CUDA siblings.
-    return (torch_device,)
 
 
 def _resolve_device(name):
