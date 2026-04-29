@@ -49,7 +49,7 @@ class Operator<RotaryEmbedding, Device::Type::kAscend>
       : RotaryEmbedding(positions, query, key, head_size, cos_sin_cache,
                         is_neox_style, rotary_dim, query_out, key_out,
                         pre_gathered),
-        max_seq_len_{cos_sin_cache.size(0)},
+        max_seq_len_{static_cast<int64_t>(cos_sin_cache.size(0))},
         elem_sz_{cos_sin_cache.element_size()} {
     assert(rotary_dim == head_size &&
            "ascend `RotaryEmbedding`: `rotary_dim` must equal `head_size` "

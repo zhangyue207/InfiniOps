@@ -81,7 +81,7 @@ class Operator<RotaryEmbedding, Device::Type::kAscend, 1>
     const int64_t head_dim = head_size_;
     const size_t elem_sz = cos_sin_cache.element_size();
 
-    max_seq_len_ = cos_sin_cache.size(0);
+    max_seq_len_ = static_cast<int64_t>(cos_sin_cache.size(0));
 
     const int64_t num_tokens = num_tokens_;
     int64_t hidden_q = static_cast<int64_t>(query.numel()) / num_tokens;
