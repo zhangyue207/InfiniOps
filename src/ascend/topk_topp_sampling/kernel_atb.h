@@ -7,6 +7,8 @@
 #include <cstdint>
 
 #include "acl/acl.h"
+#include "aclnn_fill_scalar.h"
+#include "aclnn_sim_thread_exponential.h"
 #include "ascend/atb_common_.h"
 #include "ascend/common.h"
 #include "ascend/workspace_pool_.h"
@@ -32,11 +34,11 @@ namespace infini::ops {
 //
 // ATB tensor layout (from `atb_ops_info.ini`):
 //   in0 (probs)      : [B, V] float16/bf16
-//   in1 (seeds)      : [B, 1] int32       — placeholder for exponential mode
-//   in2 (unused)     : [B, 1] float16/bf16 — placeholder
-//   in3 (exp_random) : [B, V] float16/bf16 — placeholder
+//   in1 (seeds)      : [B, 1] int32
+//   in2 (top_p)      : [B, 1] float16/bf16
+//   in3 (exp_random) : [B, V] float16/bf16
 //   out0 (indices)   : [B, 1] int32
-//   out1 (out_probs) : [B, 1] float16/bf16 — placeholder
+//   out1 (out_probs) : [B, 1] float16/bf16
 template <>
 class Operator<TopkToppSampling, Device::Type::kAscend, 0>
     : public TopkToppSampling {
@@ -55,11 +57,28 @@ class Operator<TopkToppSampling, Device::Type::kAscend, 0>
               "[TopkToppSampling] atb::CreateOperation failed (status=%d)\n",
               static_cast<int>(s));
     }
+
+    seeds_cache_ = ascend::AclTensorCache(
+        {static_cast<int64_t>(batch_size_), 1}, ACL_INT32, nullptr);
+    top_p_cache_ =
+        ascend::AclTensorCache({static_cast<int64_t>(batch_size_), 1},
+                               ascend::ToAclDtype(dtype_), nullptr);
+    exp_random_cache_ = ascend::AclTensorCache(
+        {static_cast<int64_t>(batch_size_), static_cast<int64_t>(vocab_size_)},
+        ascend::ToAclDtype(dtype_), nullptr);
+    zero_i32_ = aclCreateScalar(&zero_i32_storage_, ACL_INT32);
+    top_p_scalar_ = aclCreateScalar(&top_p_storage_, ACL_FLOAT);
   }
 
   ~Operator() {
     if (!ascend::IsAclRuntimeAlive()) return;
 
+    seeds_cache_.release();
+    top_p_cache_.release();
+    exp_random_cache_.release();
+
+    if (zero_i32_) aclDestroyScalar(zero_i32_);
+    if (top_p_scalar_) aclDestroyScalar(top_p_scalar_);
     if (op_) atb::DestroyOperation(op_);
   }
 
@@ -108,13 +127,15 @@ class Operator<TopkToppSampling, Device::Type::kAscend, 0>
     auto& arena = ascend::GetWorkspacePool().Ensure(stream, aux_bytes);
     auto* base = static_cast<uint8_t*>(arena.buf);
     void* seeds_ptr = base;
-    void* in2_ptr = base + seeds_bytes;
+    void* top_p_ptr = base + seeds_bytes;
     void* in3_ptr = base + seeds_bytes + in2_bytes;
     void* out1_ptr = base + seeds_bytes + in2_bytes + in3_bytes;
 
+    FillAuxTensors(stream, seeds_ptr, top_p_ptr, in3_ptr);
+
     atb::Tensor t_probs = mk2d(probs_dt, B, V, probs_ptr, probs_elem);
     atb::Tensor t_seeds = mk2d(ACL_INT32, B, 1, seeds_ptr, 4);
-    atb::Tensor t_in2 = mk2d(probs_dt, B, 1, in2_ptr, probs_elem);
+    atb::Tensor t_in2 = mk2d(probs_dt, B, 1, top_p_ptr, probs_elem);
     atb::Tensor t_in3 = mk2d(probs_dt, B, V, in3_ptr, probs_elem);
     atb::Tensor t_out0 = mk2d(ACL_INT32, B, 1, out_ptr, 4);
     atb::Tensor t_out1 = mk2d(probs_dt, B, 1, out1_ptr, probs_elem);
@@ -146,12 +167,14 @@ class Operator<TopkToppSampling, Device::Type::kAscend, 0>
 
       // Update tensor data pointers in case the arena was reallocated.
       seeds_ptr = base;
-      in2_ptr = base + seeds_bytes;
+      top_p_ptr = base + seeds_bytes;
       in3_ptr = base + seeds_bytes + in2_bytes;
       out1_ptr = base + seeds_bytes + in2_bytes + in3_bytes;
 
+      FillAuxTensors(stream, seeds_ptr, top_p_ptr, in3_ptr);
+
       vp.inTensors[1].deviceData = seeds_ptr;
-      vp.inTensors[2].deviceData = in2_ptr;
+      vp.inTensors[2].deviceData = top_p_ptr;
       vp.inTensors[3].deviceData = in3_ptr;
       vp.outTensors[1].deviceData = out1_ptr;
 
@@ -175,6 +198,77 @@ class Operator<TopkToppSampling, Device::Type::kAscend, 0>
   }
 
  private:
+  void FillAuxTensors(aclrtStream stream, void* seeds_ptr, void* top_p_ptr,
+                      void* exp_random_ptr) const {
+    auto t_seeds = seeds_cache_.get(seeds_ptr);
+    auto t_top_p = top_p_cache_.get(top_p_ptr);
+    auto t_exp_random = exp_random_cache_.get(exp_random_ptr);
+
+    FillScalar(stream, t_seeds, seeds_ptr, zero_i32_, seeds_fill_ws_,
+               seeds_fill_exec_);
+    FillScalar(stream, t_top_p, top_p_ptr, top_p_scalar_, top_p_fill_ws_,
+               top_p_fill_exec_);
+    FillExponential(stream, t_exp_random, exp_random_ptr);
+  }
+
+  void FillScalar(aclrtStream stream, aclTensor* tensor, void* data,
+                  aclScalar* value, uint64_t& workspace_size,
+                  aclOpExecutor*& executor) const {
+    if (!executor) {
+      aclnnInplaceFillScalarGetWorkspaceSize(tensor, value, &workspace_size,
+                                             &executor);
+      aclSetAclOpExecutorRepeatable(executor);
+    } else {
+      aclSetInputTensorAddr(executor, 0, tensor, data);
+    }
+
+    auto& arena =
+        ascend::GetWorkspacePool().Ensure(stream, workspace_size, "topk_fill");
+    aclnnInplaceFillScalar(arena.buf, workspace_size, executor, stream);
+  }
+
+  void FillExponential(aclrtStream stream, aclTensor* tensor,
+                       void* data) const {
+    if (!exp_exec_) {
+      aclnnSimThreadExponentialGetWorkspaceSize(
+          tensor, static_cast<int64_t>(batch_size_ * vocab_size_), 1.0,
+          /*seed=*/0, /*offset=*/0, &exp_ws_, &exp_exec_);
+      aclSetAclOpExecutorRepeatable(exp_exec_);
+    } else {
+      aclSetInputTensorAddr(exp_exec_, 0, tensor, data);
+    }
+
+    auto& arena =
+        ascend::GetWorkspacePool().Ensure(stream, exp_ws_, "topk_exp");
+    aclnnSimThreadExponential(arena.buf, exp_ws_, exp_exec_, stream);
+  }
+
+  mutable ascend::AclTensorCache seeds_cache_;
+
+  mutable ascend::AclTensorCache top_p_cache_;
+
+  mutable ascend::AclTensorCache exp_random_cache_;
+
+  int32_t zero_i32_storage_{0};
+
+  float top_p_storage_{static_cast<float>(topp_)};
+
+  aclScalar* zero_i32_ = nullptr;
+
+  aclScalar* top_p_scalar_ = nullptr;
+
+  mutable aclOpExecutor* seeds_fill_exec_ = nullptr;
+
+  mutable uint64_t seeds_fill_ws_ = 0;
+
+  mutable aclOpExecutor* top_p_fill_exec_ = nullptr;
+
+  mutable uint64_t top_p_fill_ws_ = 0;
+
+  mutable aclOpExecutor* exp_exec_ = nullptr;
+
+  mutable uint64_t exp_ws_ = 0;
+
   atb::Operation* op_ = nullptr;
 };
 
