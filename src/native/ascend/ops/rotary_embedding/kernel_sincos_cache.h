@@ -49,7 +49,7 @@ class Operator<RotaryEmbedding, Device::Type::kAscend, 2>
       : RotaryEmbedding(positions, query, key, head_size, cos_sin_cache,
                         is_neox_style, rotary_dim, query_out, key_out,
                         pre_gathered),
-        max_seq_len_{cos_sin_cache.size(0)} {
+        max_seq_len_{static_cast<int64_t>(cos_sin_cache.size(0))} {
     assert(has_key_ &&
            "ascend `RotaryEmbedding` (`aclnnRopeWithSinCosCache`): `key` is "
            "required — this fused API always rotates Q and K together");
