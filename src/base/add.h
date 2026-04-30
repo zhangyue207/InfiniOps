@@ -7,6 +7,9 @@
 
 namespace infini::ops {
 
+// Elementwise add for tensors with an explicitly materialized output shape.
+// InfiniOps v1 requires all tensors to have the same dtype and does not apply
+// PyTorch-style type promotion.
 class Add : public Operator<Add> {
  public:
   Add(const Tensor input, const Tensor other, Tensor out)

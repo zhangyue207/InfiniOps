@@ -1,16 +1,23 @@
 #ifndef INFINI_OPS_BASE_FLASH_ATTENTION_H_
 #define INFINI_OPS_BASE_FLASH_ATTENTION_H_
 
+#include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <optional>
 #include <vector>
 
+#include "data_type.h"
 #include "operator.h"
 
 namespace infini::ops {
 
 class FlashAttention : public Operator<FlashAttention> {
  public:
+  // Attention uses flash-attn / vLLM naming and argument order.  `output` is
+  // explicit because InfiniOps operators are in-place; this is an intentional
+  // exception to the normal output-last style when matching upstream call
+  // surfaces would otherwise be ambiguous.
   // `window_left` / `window_right` is the native InfiniOps pair-form
   // window (left-context / right-context tokens, `-1` = disabled).
   // `sliding_window` is a vLLM-style single-parameter shortcut: when
@@ -52,6 +59,66 @@ class FlashAttention : public Operator<FlashAttention> {
            "`FlashAttention` requires `num_heads` divisible by `num_kv_heads`");
     assert(query.ndim() == 3 &&
            "`FlashAttention` requires query to be 3D [T, N, D]");
+    assert(num_heads == query.size(1) &&
+           "`FlashAttention` requires `num_heads` to match query shape");
+    assert(head_size == query.size(2) &&
+           "`FlashAttention` requires `head_size` to match query shape");
+    assert(key.dtype() == dtype_ && value.dtype() == dtype_ &&
+           output.dtype() == dtype_ &&
+           "`FlashAttention` requires `query`, `key`, `value`, and `output` "
+           "same dtype");
+    assert(output.shape() == query.shape() &&
+           "`FlashAttention` requires `output` to match query shape");
+    assert(query.stride(-1) == 1 && key.stride(-1) == 1 &&
+           value.stride(-1) == 1 && output.stride(-1) == 1 &&
+           "`FlashAttention` requires contiguous last dimension");
+    assert(std::isfinite(scale_) && "`FlashAttention` requires finite `scale`");
+
+    if (has_block_table_) {
+      assert(key.ndim() == 4 && value.ndim() == 4 &&
+             "`FlashAttention` with `block_table` requires paged `key` / "
+             "`value` to be `[num_blocks, block_size, heads, dim]`.");
+      assert(key.shape() == value.shape() &&
+             "`FlashAttention` requires `key` and `value` same shape");
+      assert(key.size(1) == static_cast<Tensor::Size>(block_size) &&
+             "`FlashAttention` requires `block_size` to match paged cache");
+      assert(key.size(2) == static_cast<Tensor::Size>(num_kv_heads) &&
+             "`FlashAttention` requires `num_kv_heads` to match `key`");
+      assert(key.size(3) == static_cast<Tensor::Size>(head_size) &&
+             "`FlashAttention` requires `head_size` to match `key`");
+      assert(block_table->ndim() == 2 &&
+             "`FlashAttention` requires `block_table` to be 2D");
+      assert(block_table->dtype() == DataType::kInt32 &&
+             "`FlashAttention` requires `block_table` to be `int32`");
+    } else {
+      assert(key.ndim() == 3 && value.ndim() == 3 &&
+             "`FlashAttention` requires `key` / `value` to be "
+             "`[T, heads, dim]`.");
+      assert(key.shape() == value.shape() &&
+             "`FlashAttention` requires `key` and `value` same shape");
+      assert(key.size(1) == static_cast<Tensor::Size>(num_kv_heads) &&
+             "`FlashAttention` requires `num_kv_heads` to match `key`");
+      assert(key.size(2) == static_cast<Tensor::Size>(head_size) &&
+             "`FlashAttention` requires `head_size` to match `key`");
+    }
+
+    if (cu_seqlens_q.has_value()) {
+      assert(cu_seqlens_q->ndim() == 1 &&
+             "`FlashAttention` requires `cu_seqlens_q` to be 1D");
+      assert((cu_seqlens_q->dtype() == DataType::kInt32 ||
+              cu_seqlens_q->dtype() == DataType::kInt64) &&
+             "`FlashAttention` requires `cu_seqlens_q` to be `int32` or "
+             "`int64`");
+    }
+
+    if (cu_seqlens_kv.has_value()) {
+      assert(cu_seqlens_kv->ndim() == 1 &&
+             "`FlashAttention` requires `cu_seqlens_kv` to be 1D");
+      assert((cu_seqlens_kv->dtype() == DataType::kInt32 ||
+              cu_seqlens_kv->dtype() == DataType::kInt64) &&
+             "`FlashAttention` requires `cu_seqlens_kv` to be `int32` or "
+             "`int64`");
+    }
   }
 
   virtual void operator()(

@@ -19,10 +19,10 @@ namespace infini::ops {
 template <>
 class Operator<MhaVarlenFwd, Device::Type::kAscend> : public MhaVarlenFwd {
  public:
-  Operator(const Tensor q, const Tensor k, const Tensor v,
-           std::optional<Tensor> out, const Tensor cu_seqlens_q,
-           const Tensor cu_seqlens_k, std::optional<Tensor> seqused_k,
-           std::optional<Tensor> leftpad_k, std::optional<Tensor> block_table,
+  Operator(const Tensor q, const Tensor k, const Tensor v, Tensor out,
+           const Tensor cu_seqlens_q, const Tensor cu_seqlens_k,
+           std::optional<Tensor> seqused_k, std::optional<Tensor> leftpad_k,
+           std::optional<Tensor> block_table,
            std::optional<Tensor> alibi_slopes, int64_t max_seqlen_q,
            int64_t max_seqlen_k, float p_dropout, float softmax_scale,
            bool zero_tensors, bool is_causal, int64_t window_size_left,
@@ -35,7 +35,7 @@ class Operator<MhaVarlenFwd, Device::Type::kAscend> : public MhaVarlenFwd {
                      is_causal, window_size_left, window_size_right, softcap,
                      return_softmax, generator, num_splits),
         q_cache_(q),
-        out_cache_(out.value()) {
+        out_cache_(out) {
     ascend::fia::AssertSupportedDtype(q.dtype(), "`MhaVarlenFwd`");
 
     if (has_block_table_) {
@@ -69,9 +69,9 @@ class Operator<MhaVarlenFwd, Device::Type::kAscend> : public MhaVarlenFwd {
     if (causal_mask_buf_) aclrtFree(causal_mask_buf_);
   }
 
-  void operator()(const Tensor q, const Tensor k, const Tensor v,
-                  std::optional<Tensor> out, const Tensor cu_seqlens_q,
-                  const Tensor cu_seqlens_k, std::optional<Tensor> seqused_k,
+  void operator()(const Tensor q, const Tensor k, const Tensor v, Tensor out,
+                  const Tensor cu_seqlens_q, const Tensor cu_seqlens_k,
+                  std::optional<Tensor> seqused_k,
                   std::optional<Tensor> leftpad_k,
                   std::optional<Tensor> block_table,
                   std::optional<Tensor> alibi_slopes, int64_t max_seqlen_q,
@@ -87,7 +87,6 @@ class Operator<MhaVarlenFwd, Device::Type::kAscend> : public MhaVarlenFwd {
     (void)window_size_left;
     (void)window_size_right;
 
-    assert(out.has_value() && "`MhaVarlenFwd`: `out` is required");
     assert(!seqused_k.has_value() &&
            "`MhaVarlenFwd`: `seqused_k` is not supported by this Ascend path");
     assert(!leftpad_k.has_value() &&
@@ -127,7 +126,7 @@ class Operator<MhaVarlenFwd, Device::Type::kAscend> : public MhaVarlenFwd {
                      : ascend::fia::CreateCumSeqLengths(cu_seqlens_k, stream);
 
     auto t_q = q_cache_.get(const_cast<void*>(q.data()));
-    auto t_out = out_cache_.get(out->data());
+    auto t_out = out_cache_.get(out.data());
     aclTensor* t_block_table = nullptr;
     aclTensor* t_k = nullptr;
     aclTensor* t_v = nullptr;

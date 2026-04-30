@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "data_type.h"
 #include "operator.h"
 
 namespace infini::ops {
@@ -47,6 +48,9 @@ namespace infini::ops {
 // skip both D2H copies and be captured into a full NPUGraph.
 class PagedAttention : public Operator<PagedAttention> {
  public:
+  // Paged attention follows vLLM naming.  `output` is explicit because
+  // InfiniOps operators are in-place; it remains before optional host mirrors
+  // to preserve the existing call surface.
   PagedAttention(const Tensor query, const Tensor key_cache,
                  const Tensor value_cache, const Tensor seq_lens,
                  const Tensor block_table, int64_t num_heads,
@@ -78,11 +82,63 @@ class PagedAttention : public Operator<PagedAttention> {
     assert(key_cache.ndim() == 4 &&
            "`PagedAttention` requires key_cache to be 4D [num_blocks, "
            "block_size, num_kv_heads, head_size].");
+    assert(value_cache.ndim() == 4 &&
+           "`PagedAttention` requires value_cache to be 4D [num_blocks, "
+           "block_size, num_kv_heads, head_size].");
+    assert(key_cache.shape() == value_cache.shape() &&
+           "`PagedAttention` requires key_cache and value_cache same shape.");
+    assert(query.dtype() == key_cache.dtype() &&
+           query.dtype() == value_cache.dtype() &&
+           query.dtype() == output.dtype() &&
+           "`PagedAttention` requires query, caches, and output same dtype.");
+    assert(query.size(1) == static_cast<Tensor::Size>(num_heads) &&
+           "`PagedAttention` requires num_heads to match query shape.");
+    assert(key_cache.size(1) == static_cast<Tensor::Size>(block_size) &&
+           "`PagedAttention` requires block_size to match cache shape.");
+    assert(key_cache.size(2) == static_cast<Tensor::Size>(num_kv_heads) &&
+           "`PagedAttention` requires num_kv_heads to match cache shape.");
+    assert(query.size(2) == static_cast<Tensor::Size>(head_size) &&
+           key_cache.size(3) == static_cast<Tensor::Size>(head_size) &&
+           "`PagedAttention` requires head_size to match query and cache.");
+    assert(query.stride(-1) == 1 && key_cache.stride(-1) == 1 &&
+           value_cache.stride(-1) == 1 && output.stride(-1) == 1 &&
+           "`PagedAttention` requires contiguous last dimension.");
+    assert(output.shape() == query.shape() &&
+           "`PagedAttention` requires output to match query shape.");
     assert(seq_lens.ndim() == 1 &&
            "`PagedAttention` requires seq_lens to be 1D [batch].");
+    assert(seq_lens.size(0) == batch_size_ &&
+           "`PagedAttention` requires seq_lens batch to match query.");
+    assert(seq_lens.dtype() == DataType::kInt32 &&
+           "`PagedAttention` requires seq_lens to be int32.");
     assert(block_table.ndim() == 2 &&
            "`PagedAttention` requires block_table to be 2D [batch, "
            "max_num_blocks].");
+    assert(block_table.size(0) == batch_size_ &&
+           "`PagedAttention` requires block_table batch to match query.");
+    assert(block_table.dtype() == DataType::kInt32 &&
+           "`PagedAttention` requires block_table to be int32.");
+
+    if (seq_lens_host.has_value()) {
+      assert(seq_lens_host->shape() == seq_lens.shape() &&
+             "`PagedAttention` requires seq_lens_host to mirror seq_lens.");
+      assert(seq_lens_host->dtype() == seq_lens.dtype() &&
+             "`PagedAttention` requires seq_lens_host dtype to match "
+             "seq_lens.");
+      assert(seq_lens_host->device().type() == Device::Type::kCpu &&
+             "`PagedAttention` requires seq_lens_host to be on CPU.");
+    }
+
+    if (block_table_host.has_value()) {
+      assert(block_table_host->shape() == block_table.shape() &&
+             "`PagedAttention` requires block_table_host to mirror "
+             "block_table.");
+      assert(block_table_host->dtype() == block_table.dtype() &&
+             "`PagedAttention` requires block_table_host dtype to match "
+             "block_table.");
+      assert(block_table_host->device().type() == Device::Type::kCpu &&
+             "`PagedAttention` requires block_table_host to be on CPU.");
+    }
   }
 
   virtual void operator()(

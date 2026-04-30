@@ -5,6 +5,9 @@
 
 namespace infini::ops {
 
+// Elementwise multiply for tensors with an explicitly materialized output
+// shape.  InfiniOps v1 requires all tensors to have the same dtype and does
+// not apply PyTorch-style type promotion.
 class Mul : public Operator<Mul> {
  public:
   Mul(const Tensor input, const Tensor other, Tensor out)
