@@ -17,6 +17,10 @@ namespace infini::ops {
 //   `input_ids`: Any shape, `int32` or `int64`.
 //   `weight`: `[vocab_size, hidden_size]`.
 //   `out`: `input_ids.shape + [hidden_size]`.
+//
+// This is the inference subset of `torch.nn.functional.embedding`; options
+// such as `padding_idx`, `max_norm`, `scale_grad_by_freq`, and `sparse` are
+// intentionally not part of this operator.
 class Embedding : public Operator<Embedding> {
  public:
   Embedding(const Tensor input_ids, const Tensor weight, Tensor out)

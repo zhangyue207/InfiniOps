@@ -25,10 +25,9 @@ class Operator<MhaFwdKvcache, Device::Type::kAscend> : public MhaFwdKvcache {
            std::optional<Tensor> rotary_sin,
            std::optional<Tensor> cache_batch_idx,
            std::optional<Tensor> leftpad_k, std::optional<Tensor> block_table,
-           std::optional<Tensor> alibi_slopes, std::optional<Tensor> out,
-           float softmax_scale, bool is_causal, int64_t window_size_left,
-           int64_t window_size_right, float softcap, bool is_rotary_interleaved,
-           int64_t num_splits = 0)
+           std::optional<Tensor> alibi_slopes, Tensor out, float softmax_scale,
+           bool is_causal, int64_t window_size_left, int64_t window_size_right,
+           float softcap, bool is_rotary_interleaved, int64_t num_splits = 0)
       : MhaFwdKvcache(q, kcache, vcache, k, v, seqlens_k, rotary_cos,
                       rotary_sin, cache_batch_idx, leftpad_k, block_table,
                       alibi_slopes, out, softmax_scale, is_causal,
@@ -53,7 +52,7 @@ class Operator<MhaFwdKvcache, Device::Type::kAscend> : public MhaFwdKvcache {
     const auto D = static_cast<int64_t>(q.size(3));
     q_cache_ = ascend::AclTensorCache({B, N, 1, D}, acl_dt,
                                       const_cast<void*>(q.data()));
-    out_cache_ = ascend::AclTensorCache({B, N, 1, D}, acl_dt, out->data());
+    out_cache_ = ascend::AclTensorCache({B, N, 1, D}, acl_dt, out.data());
     block_table_cache_ = ascend::AclTensorCache(block_table.value());
 
     const int64_t num_blocks = kcache.size(0);
@@ -71,9 +70,9 @@ class Operator<MhaFwdKvcache, Device::Type::kAscend> : public MhaFwdKvcache {
       std::optional<Tensor> seqlens_k, std::optional<Tensor> rotary_cos,
       std::optional<Tensor> rotary_sin, std::optional<Tensor> cache_batch_idx,
       std::optional<Tensor> leftpad_k, std::optional<Tensor> block_table,
-      std::optional<Tensor> alibi_slopes, std::optional<Tensor> out,
-      float softmax_scale, bool is_causal, int64_t window_size_left,
-      int64_t window_size_right, float softcap, bool is_rotary_interleaved,
+      std::optional<Tensor> alibi_slopes, Tensor out, float softmax_scale,
+      bool is_causal, int64_t window_size_left, int64_t window_size_right,
+      float softcap, bool is_rotary_interleaved,
       int64_t num_splits) const override {
     (void)softmax_scale;
     (void)is_causal;
@@ -81,7 +80,6 @@ class Operator<MhaFwdKvcache, Device::Type::kAscend> : public MhaFwdKvcache {
     (void)window_size_right;
     (void)is_rotary_interleaved;
 
-    assert(out.has_value() && "`MhaFwdKvcache`: `out` is required");
     assert(!k.has_value() && !v.has_value() &&
            "`MhaFwdKvcache`: appending new `k` / `v` into cache is not "
            "supported by this Ascend path");
@@ -107,7 +105,7 @@ class Operator<MhaFwdKvcache, Device::Type::kAscend> : public MhaFwdKvcache {
     auto seq_k = ascend::fia::CreateSeqLengths(seqlens_k.value(), stream);
 
     auto t_q = q_cache_.get(const_cast<void*>(q.data()));
-    auto t_out = out_cache_.get(out->data());
+    auto t_out = out_cache_.get(out.data());
     auto t_block_table =
         block_table_cache_.get(const_cast<void*>(block_table->data()));
 

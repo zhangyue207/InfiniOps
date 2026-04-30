@@ -30,9 +30,19 @@ class Linear : public Operator<Linear> {
            "operator `Linear` requires a and b to have the same dtype");
     assert(a.dtype() == out.dtype() &&
            "operator `Linear` requires a and out to have the same dtype");
+    const auto a_rows = trans_a ? a.size(-1) : a.size(-2);
+    const auto a_cols = trans_a ? a.size(-2) : a.size(-1);
+    const auto b_rows = trans_b ? b.size(-1) : b.size(-2);
+    const auto b_cols = trans_b ? b.size(-2) : b.size(-1);
+    assert(a_cols == b_rows &&
+           "`Linear`: inner dimensions must match after transpose flags");
+    assert(out.size(-2) == a_rows && out.size(-1) == b_cols &&
+           "`Linear`: output matrix dimensions must match inputs");
     if (has_bias_) {
       assert(bias->dtype() == out.dtype() &&
              "operator `Linear` requires bias and out to have the same dtype");
+      assert(bias->ndim() == 1 && bias->size(0) == out.size(-1) &&
+             "`Linear`: `bias` must be 1D `[out_features]`");
     }
   }
 
@@ -48,6 +58,8 @@ class Linear : public Operator<Linear> {
     assert(weight.size(-2) == out.size(-1) &&
            "`Linear`: `weight.shape[-2]` must equal `out.shape[-1]` "
            "(`out_features`)");
+    assert(out.size(-2) == input.size(-2) &&
+           "`Linear`: `out.shape[-2]` must equal `input.shape[-2]`");
   }
 
   // Deprecated — use `(input, weight, bias, out)` overload.

@@ -2,6 +2,7 @@
 #define INFINI_OPS_BASE_MHA_VARLEN_FWD_H_
 
 #include <cassert>
+#include <cmath>
 #include <optional>
 
 #include "data_type.h"
@@ -20,12 +21,14 @@ namespace infini::ops {
 //
 // InfiniOps is an in-place operator API, so `out` must be supplied even
 // though FlashAttention can allocate it when omitted.
+// This signature intentionally keeps `out` near the FlashAttention argument
+// position for compatibility with existing callers; this is an exception to
+// the normal InfiniOps output-last convention.
 class MhaVarlenFwd : public Operator<MhaVarlenFwd> {
  public:
-  MhaVarlenFwd(const Tensor q, const Tensor k, const Tensor v,
-               std::optional<Tensor> out, const Tensor cu_seqlens_q,
-               const Tensor cu_seqlens_k, std::optional<Tensor> seqused_k,
-               std::optional<Tensor> leftpad_k,
+  MhaVarlenFwd(const Tensor q, const Tensor k, const Tensor v, Tensor out,
+               const Tensor cu_seqlens_q, const Tensor cu_seqlens_k,
+               std::optional<Tensor> seqused_k, std::optional<Tensor> leftpad_k,
                std::optional<Tensor> block_table,
                std::optional<Tensor> alibi_slopes, int64_t max_seqlen_q,
                int64_t max_seqlen_k, float p_dropout, float softmax_scale,
@@ -50,7 +53,6 @@ class MhaVarlenFwd : public Operator<MhaVarlenFwd> {
         return_softmax_{return_softmax},
         num_splits_{num_splits},
         q_dtype_{q.dtype()},
-        has_out_{out.has_value()},
         has_seqused_k_{seqused_k.has_value()},
         has_leftpad_k_{leftpad_k.has_value()},
         has_block_table_{block_table.has_value()},
@@ -66,13 +68,23 @@ class MhaVarlenFwd : public Operator<MhaVarlenFwd> {
              "`MhaVarlenFwd` requires `block_table` to be 2D.");
       assert(block_table->dtype() == DataType::kInt32 &&
              "`MhaVarlenFwd` requires `block_table` to be `int32`.");
+      assert(k.shape() == v.shape() &&
+             "`MhaVarlenFwd` requires paged `k` and `v` to have same shape.");
+      assert(k.size(3) == head_size_ &&
+             "`MhaVarlenFwd` requires paged `k` / `v` last dim to match `q`.");
     } else {
       assert(k.ndim() == 3 && v.ndim() == 3 &&
              "`MhaVarlenFwd` requires `k` / `v` to be "
              "`[total_k, heads, dim]`.");
+      assert(k.shape() == v.shape() &&
+             "`MhaVarlenFwd` requires `k` and `v` to have same shape.");
+      assert(k.size(2) == head_size_ &&
+             "`MhaVarlenFwd` requires `k` / `v` last dim to match `q`.");
     }
     assert(k.dtype() == q.dtype() && v.dtype() == q.dtype() &&
            "`MhaVarlenFwd` requires `q`, `k`, and `v` to have same dtype");
+    assert(out.dtype() == q.dtype() &&
+           "`MhaVarlenFwd` requires `out` to have same dtype as `q`.");
     assert(k.stride(-1) == 1 && v.stride(-1) == 1 && q.stride(-1) == 1 &&
            "`MhaVarlenFwd` requires contiguous last dimension");
     assert(num_heads_ % num_kv_heads_ == 0 &&
@@ -80,27 +92,53 @@ class MhaVarlenFwd : public Operator<MhaVarlenFwd> {
     assert(head_size_ <= 256 &&
            "`MhaVarlenFwd` supports `head_size` up to 256");
     assert(head_size_ % 8 == 0 &&
-           "`MhaVarlenFwd` requires `head_size` to be a multiple of 8");
+           "`MhaVarlenFwd` requires `head_size` to be a multiple of 8 in "
+           "InfiniOps v1.");
     assert(cu_seqlens_q.ndim() == 1 && cu_seqlens_k.ndim() == 1 &&
            "`MhaVarlenFwd` requires 1D `cu_seqlens_q` / `cu_seqlens_k`");
     assert(cu_seqlens_q.dtype() == DataType::kInt32 &&
            cu_seqlens_k.dtype() == DataType::kInt32 &&
            "`MhaVarlenFwd` requires `cu_seqlens_q` and `cu_seqlens_k` to be "
            "`int32`.");
+    assert(cu_seqlens_q.numel() > 1 &&
+           "`MhaVarlenFwd` requires non-empty `cu_seqlens`.");
     assert(cu_seqlens_q.numel() == cu_seqlens_k.numel() &&
            "`MhaVarlenFwd` requires matching `cu_seqlens` lengths");
-    assert(has_out_ && "`MhaVarlenFwd` requires caller-provided `out`");
+    assert(out.shape() == q.shape() &&
+           "`MhaVarlenFwd` requires `out` to match `q` shape");
+    assert(out.stride(-1) == 1 &&
+           "`MhaVarlenFwd` requires `out` contiguous last dimension");
+    assert(p_dropout >= 0.0f && p_dropout <= 1.0f &&
+           "`MhaVarlenFwd` requires `p_dropout` in `[0, 1]`.");
+    assert(std::isfinite(softmax_scale_) &&
+           "`MhaVarlenFwd` requires finite `softmax_scale`.");
+    assert(max_seqlen_q_ >= 0 && max_seqlen_k_ >= 0 &&
+           "`MhaVarlenFwd` requires non-negative max sequence lengths.");
 
-    if (out.has_value()) {
-      assert(out->shape() == q.shape() &&
-             "`MhaVarlenFwd` requires `out` to match `q` shape");
-      assert(out->stride(-1) == 1 &&
-             "`MhaVarlenFwd` requires `out` contiguous last dimension");
+    if (seqused_k.has_value()) {
+      assert(seqused_k->ndim() == 1 &&
+             "`MhaVarlenFwd` requires `seqused_k` to be 1D.");
+      assert(seqused_k->dtype() == DataType::kInt32 &&
+             "`MhaVarlenFwd` requires `seqused_k` to be `int32`.");
+    }
+
+    if (leftpad_k.has_value()) {
+      assert(leftpad_k->ndim() == 1 &&
+             "`MhaVarlenFwd` requires `leftpad_k` to be 1D.");
+      assert(leftpad_k->dtype() == DataType::kInt32 &&
+             "`MhaVarlenFwd` requires `leftpad_k` to be `int32`.");
+    }
+
+    if (alibi_slopes.has_value()) {
+      assert((alibi_slopes->ndim() == 1 || alibi_slopes->ndim() == 2) &&
+             "`MhaVarlenFwd` requires `alibi_slopes` to be 1D or 2D.");
+      assert(alibi_slopes->dtype() == DataType::kFloat32 &&
+             "`MhaVarlenFwd` requires `alibi_slopes` to be `float32`.");
     }
   }
 
   virtual void operator()(
-      const Tensor q, const Tensor k, const Tensor v, std::optional<Tensor> out,
+      const Tensor q, const Tensor k, const Tensor v, Tensor out,
       const Tensor cu_seqlens_q, const Tensor cu_seqlens_k,
       std::optional<Tensor> seqused_k, std::optional<Tensor> leftpad_k,
       std::optional<Tensor> block_table, std::optional<Tensor> alibi_slopes,
@@ -144,8 +182,6 @@ class MhaVarlenFwd : public Operator<MhaVarlenFwd> {
   int64_t num_splits_{0};
 
   const DataType q_dtype_;
-
-  bool has_out_{false};
 
   bool has_seqused_k_{false};
 
