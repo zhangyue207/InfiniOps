@@ -67,6 +67,43 @@ def test_linear(
     )
 
 
+@pytest.mark.auto_act_and_assert
+@pytest.mark.parametrize("has_bias", (False, True))
+@pytest.mark.parametrize(
+    ("dtype", "rtol", "atol"),
+    (
+        (torch.float32, 1e-2, 5e-2),
+        (torch.float16, 1e-2, 1e-2),
+        (torch.bfloat16, 1e-2, 1e-2),
+    ),
+)
+def test_linear_batched_input_2d_weight(
+    has_bias,
+    dtype,
+    device,
+    rtol,
+    atol,
+):
+    a = randn_strided((2, 4, 64), None, dtype=dtype, device=device)
+    b = randn_strided((32, 64), None, dtype=dtype, device=device)
+
+    bias = None
+
+    if has_bias:
+        bias = randn_strided((32,), None, dtype=dtype, device=device)
+
+    out = empty_strided((2, 4, 32), None, dtype=dtype, device=device)
+
+    return Payload(
+        lambda *args: _linear(*args, trans_b=True),
+        lambda *args: _torch_linear(*args, trans_b=True),
+        (a, b, bias, out),
+        {},
+        rtol=rtol,
+        atol=atol,
+    )
+
+
 def _linear(a, b, bias, out, trans_a=False, trans_b=False):
     infini.ops.linear(a, b, bias, trans_a, trans_b, out, stream=get_stream(a.device))
 
