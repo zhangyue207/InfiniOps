@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "acl/acl.h"
 #include "ascend/scaled_softmax/kernel.h"
 #include "ascend/topk_topp_sampling/kernel_atb.h"
 #include "ascend/workspace_pool_.h"
@@ -20,7 +21,7 @@
 namespace infini::ops {
 
 template <>
-class Operator<TopKTopPSampler, Device::Type::kAscend, 0>
+class Operator<TopKTopPSampler, Device::Type::kAscend, 1>
     : public TopKTopPSampler {
  public:
   Operator(const Tensor logits, std::optional<Tensor> k,
@@ -30,19 +31,19 @@ class Operator<TopKTopPSampler, Device::Type::kAscend, 0>
            "`TopKTopPSampler` Ascend ATB path requires float16 or bfloat16 "
            "logits.");
     assert(logits.IsContiguous() &&
-           "`TopKTopPSampler` Ascend path requires contiguous logits.");
+           "`TopKTopPSampler` Ascend ATB path requires contiguous logits.");
     assert(out.IsContiguous() &&
-           "`TopKTopPSampler` Ascend path requires contiguous output.");
-    ValidateHostTensor(k, "`k`");
-    ValidateHostTensor(p, "`p`");
+           "`TopKTopPSampler` Ascend ATB path requires contiguous output.");
+    ValidateHostTensor(k);
+    ValidateHostTensor(p);
   }
 
   void operator()(const Tensor logits, std::optional<Tensor> k,
                   std::optional<Tensor> p, Tensor out) const override {
     assert(logits.IsContiguous() &&
-           "`TopKTopPSampler` Ascend path requires contiguous logits.");
+           "`TopKTopPSampler` Ascend ATB path requires contiguous logits.");
     assert(out.IsContiguous() &&
-           "`TopKTopPSampler` Ascend path requires contiguous output.");
+           "`TopKTopPSampler` Ascend ATB path requires contiguous output.");
 
     auto stream = static_cast<aclrtStream>(stream_);
     auto elem_size = kDataTypeToSize.at(dtype_);
@@ -52,6 +53,7 @@ class Operator<TopKTopPSampler, Device::Type::kAscend, 0>
     auto* logits_base =
         static_cast<std::uint8_t*>(const_cast<void*>(logits.data()));
     auto* out_base = static_cast<std::uint8_t*>(out.data());
+    Config sub_config;
 
     for (Tensor::Size row = 0; row < batch_size_; ++row) {
       auto logits_offset =
@@ -66,24 +68,22 @@ class Operator<TopKTopPSampler, Device::Type::kAscend, 0>
       Tensor row_out{out_base + out_offset, Tensor::Shape{1}, DataType::kInt32,
                      out.device()};
 
-      ScaledSoftmax::Call(handle_, config_, row_logits, 1.0, probs);
-      TopkToppSampling::Call(handle_, config_, probs, GetK(k, row),
+      ScaledSoftmax::Call(handle_, sub_config, row_logits, 1.0, probs);
+      TopkToppSampling::Call(handle_, sub_config, probs, GetK(k, row),
                              GetP(p, row), row_out);
     }
   }
 
  private:
-  void ValidateHostTensor(std::optional<Tensor> tensor,
-                          const char* name) const {
+  void ValidateHostTensor(std::optional<Tensor> tensor) const {
     if (!tensor.has_value()) return;
 
     assert(tensor->device().type() == Device::Type::kCpu &&
-           "`TopKTopPSampler` Ascend path currently requires host-side "
+           "`TopKTopPSampler` Ascend ATB path currently requires host-side "
            "`k`/`p` tensors.");
     assert(tensor->IsContiguous() &&
-           "`TopKTopPSampler` Ascend path requires contiguous `k`/`p` "
+           "`TopKTopPSampler` Ascend ATB path requires contiguous `k`/`p` "
            "tensors.");
-    (void)name;
   }
 
   int64_t GetK(std::optional<Tensor> k, Tensor::Size row) const {
