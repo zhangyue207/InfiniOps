@@ -10,6 +10,7 @@
 #include "aclnnop/aclnn_fused_infer_attention_score_v4.h"
 #include "ascend/common.h"
 #include "ascend/fia_common_.h"
+#include "ascend/graph_cleanup_.h"
 #include "ascend/workspace_pool_.h"
 #include "base/mha_varlen_fwd.h"
 #include "operator.h"
@@ -183,10 +184,12 @@ class Operator<MhaVarlenFwd, Device::Type::kAscend> : public MhaVarlenFwd {
     ret = aclnnFusedInferAttentionScoreV4(arena.buf, ws_size, executor, stream);
     assert(ret == ACL_SUCCESS && "`aclnnFusedInferAttentionScoreV4` failed");
 
-    aclDestroyTensorList(key_list);
-    aclDestroyTensorList(value_list);
-    aclDestroyIntArray(seq_q);
-    aclDestroyIntArray(seq_k);
+    ascend::DeferOrRunAclCleanup([key_list, value_list, seq_q, seq_k]() {
+      aclDestroyTensorList(key_list);
+      aclDestroyTensorList(value_list);
+      aclDestroyIntArray(seq_q);
+      aclDestroyIntArray(seq_k);
+    });
   }
 
  private:

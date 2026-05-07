@@ -9,6 +9,7 @@
 #include "aclnn/aclnn_base.h"
 #include "aclnnop/aclnn_fused_infer_attention_score_v4.h"
 #include "ascend/common.h"
+#include "ascend/graph_cleanup_.h"
 #include "ascend/workspace_pool_.h"
 #include "base/flash_attention.h"
 #include "operator.h"
@@ -270,10 +271,12 @@ class Operator<FlashAttention, Device::Type::kAscend> : public FlashAttention {
 
       // t_q and t_out are owned by caches — do NOT destroy.
       // t_k and t_v are owned by TensorLists.
-      aclDestroyTensorList(key_list);
-      aclDestroyTensorList(val_list);
-      aclDestroyIntArray(seq_q);
-      aclDestroyIntArray(seq_kv);
+      ascend::DeferOrRunAclCleanup([key_list, val_list, seq_q, seq_kv]() {
+        aclDestroyTensorList(key_list);
+        aclDestroyTensorList(val_list);
+        aclDestroyIntArray(seq_q);
+        aclDestroyIntArray(seq_kv);
+      });
       return;
     }
 
@@ -339,9 +342,11 @@ class Operator<FlashAttention, Device::Type::kAscend> : public FlashAttention {
 
     // t_query, t_output, t_block_table owned by caches — do NOT destroy.
     // t_key, t_value owned by TensorLists.
-    aclDestroyTensorList(key_list);
-    aclDestroyTensorList(val_list);
-    aclDestroyIntArray(seq_kv);
+    ascend::DeferOrRunAclCleanup([key_list, val_list, seq_kv]() {
+      aclDestroyTensorList(key_list);
+      aclDestroyTensorList(val_list);
+      aclDestroyIntArray(seq_kv);
+    });
   }
 
  private:

@@ -9,11 +9,13 @@ from tests.utils import Payload, get_stream, randn_strided
 @pytest.mark.parametrize(
     "batch_size, kv_len, num_heads, num_kv_heads, head_size",
     (
+        (1, 30, 7, 1, 128),
         (2, 17, 8, 2, 64),
         (3, 23, 16, 4, 128),
     ),
 )
 @pytest.mark.parametrize("seqlens_on_cpu", (False, True))
+@pytest.mark.parametrize("block_size", (64, 128, 256))
 @pytest.mark.parametrize(
     ("dtype", "rtol", "atol"),
     (
@@ -28,13 +30,13 @@ def test_mha_fwd_kvcache_paged_decode(
     num_kv_heads,
     head_size,
     seqlens_on_cpu,
+    block_size,
     implementation_index,
     dtype,
     device,
     rtol,
     atol,
 ):
-    block_size = 256
     blocks_per_seq = (kv_len + block_size - 1) // block_size
     num_blocks = batch_size * blocks_per_seq
     scale = 1.0 / head_size**0.5

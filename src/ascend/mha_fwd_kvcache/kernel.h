@@ -10,6 +10,7 @@
 #include "aclnnop/aclnn_fused_infer_attention_score_v4.h"
 #include "ascend/common.h"
 #include "ascend/fia_common_.h"
+#include "ascend/graph_cleanup_.h"
 #include "ascend/workspace_pool_.h"
 #include "base/mha_fwd_kvcache.h"
 #include "operator.h"
@@ -43,8 +44,10 @@ class Operator<MhaFwdKvcache, Device::Type::kAscend> : public MhaFwdKvcache {
            "`block_table`");
     assert(has_seqlens_k_ &&
            "`MhaFwdKvcache`: this Ascend path requires `seqlens_k`");
-    assert(page_block_size_ % 256 == 0 &&
-           "`MhaFwdKvcache`: paged KV block size must be divisible by 256");
+    assert(page_block_size_ > 0 && page_block_size_ <= 512 &&
+           page_block_size_ % 16 == 0 &&
+           "`MhaFwdKvcache`: paged KV block size must be 16-aligned and "
+           "not exceed 512 for `float16` and `bfloat16`");
 
     auto acl_dt = ascend::ToAclDtype(q.dtype());
     const auto B = static_cast<int64_t>(q.size(0));
@@ -57,10 +60,14 @@ class Operator<MhaFwdKvcache, Device::Type::kAscend> : public MhaFwdKvcache {
 
     const int64_t num_blocks = kcache.size(0);
     const int64_t block_size = kcache.size(1);
-    const int64_t kv_nd = kcache.size(2) * kcache.size(3);
-    kv_shape_ = {num_blocks, block_size, kv_nd};
-    kv_strides_ = {block_size * kv_nd, kv_nd, 1};
-    kv_storage_shape_ = {num_blocks * block_size * kv_nd};
+    const int64_t num_kv_heads = kcache.size(2);
+    const int64_t head_dim = kcache.size(3);
+    // Keep the paged KV descriptor in the physical cache layout expected by
+    // FIA paged attention: `[num_blocks, block_size, num_kv_heads, head_dim]`.
+    kv_shape_ = {num_blocks, block_size, num_kv_heads, head_dim};
+    kv_strides_ = {block_size * num_kv_heads * head_dim,
+                   num_kv_heads * head_dim, head_dim, 1};
+    kv_storage_shape_ = {num_blocks * block_size * num_kv_heads * head_dim};
     kv_acl_dtype_ = acl_dt;
   }
 
@@ -150,9 +157,13 @@ class Operator<MhaFwdKvcache, Device::Type::kAscend> : public MhaFwdKvcache {
     ret = aclnnFusedInferAttentionScoreV4(arena.buf, ws_size, executor, stream);
     assert(ret == ACL_SUCCESS && "`aclnnFusedInferAttentionScoreV4` failed");
 
-    aclDestroyTensorList(key_list);
-    aclDestroyTensorList(value_list);
-    aclDestroyIntArray(seq_k);
+    // Keep per-call descriptors alive until the RI graph task update using
+    // them has completed.
+    ascend::DeferOrRunAclCleanup([key_list, value_list, seq_k]() {
+      aclDestroyTensorList(key_list);
+      aclDestroyTensorList(value_list);
+      aclDestroyIntArray(seq_k);
+    });
   }
 
  private:

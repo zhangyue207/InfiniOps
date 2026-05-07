@@ -8,6 +8,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 #include "acl/acl.h"
@@ -18,6 +19,8 @@ struct WorkspaceArena {
   void* buf = nullptr;
 
   uint64_t capacity = 0;
+
+  std::mutex mutex;
 };
 
 class WorkspacePool {
@@ -57,16 +60,21 @@ class WorkspacePool {
            "capture. Ensure all operators run at least once during "
            "eager warmup.");
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    WorkspaceArena* arena = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
 
-    SlotKey key{stream, slot};
-    auto& owned = arenas_[key];
+      SlotKey key{stream, slot};
+      auto& owned = arenas_[key];
 
-    if (!owned) {
-      owned = std::make_unique<WorkspaceArena>();
+      if (!owned) {
+        owned = std::make_unique<WorkspaceArena>();
+      }
+
+      arena = owned.get();
     }
 
-    auto* arena = owned.get();
+    std::lock_guard<std::mutex> arena_lock(arena->mutex);
 
     if (needed > arena->capacity) {
       if (arena->capacity > 0) {
