@@ -62,11 +62,13 @@ class Operator<MhaFwdKvcache, Device::Type::kAscend> : public MhaFwdKvcache {
     const int64_t block_size = kcache.size(1);
     const int64_t num_kv_heads = kcache.size(2);
     const int64_t head_dim = kcache.size(3);
-    // Keep the paged KV descriptor in the physical cache layout expected by
-    // FIA paged attention: `[num_blocks, block_size, num_kv_heads, head_dim]`.
-    kv_shape_ = {num_blocks, block_size, num_kv_heads, head_dim};
-    kv_strides_ = {block_size * num_kv_heads * head_dim,
-                   num_kv_heads * head_dim, head_dim, 1};
+    // FIA decode expects paged KV descriptors as `[num_blocks, num_kv_heads,
+    // block_size, head_dim]`.  The physical cache is stored as
+    // `[num_blocks, block_size, num_kv_heads, head_dim]`, so describe it as a
+    // strided view instead of moving data.
+    kv_shape_ = {num_blocks, num_kv_heads, block_size, head_dim};
+    kv_strides_ = {block_size * num_kv_heads * head_dim, head_dim,
+                   num_kv_heads * head_dim, 1};
     kv_storage_shape_ = {num_blocks * block_size * num_kv_heads * head_dim};
     kv_acl_dtype_ = acl_dt;
   }
