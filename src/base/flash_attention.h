@@ -1,39 +1,47 @@
 #ifndef INFINI_OPS_BASE_FLASH_ATTENTION_H_
 #define INFINI_OPS_BASE_FLASH_ATTENTION_H_
 
+#include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <optional>
 #include <vector>
 
+#include "data_type.h"
 #include "operator.h"
 
 namespace infini::ops {
 
-// Fused multi-head / grouped-query attention.
-//
-// Interface follows vLLM v1 `AttentionImpl.forward()`:
-//   `vllm.v1.attention.backends.abstract.AttentionImpl`
-//
-// Layout: `query` / `key` / `value` are `[T, N, D]` (TND).
-// Prefill uses `cu_seqlens_q` / `cu_seqlens_kv` for variable-length packing.
-// Decode uses `block_table` for paged KV cache lookup.
 class FlashAttention : public Operator<FlashAttention> {
  public:
+  // Attention uses flash-attn / vLLM naming and argument order.  `output` is
+  // explicit because InfiniOps operators are in-place; this is an intentional
+  // exception to the normal output-last style when matching upstream call
+  // surfaces would otherwise be ambiguous.
+  // `window_left` / `window_right` is the native InfiniOps pair-form
+  // window (left-context / right-context tokens, `-1` = disabled).
+  // `sliding_window` is a vLLM-style single-parameter shortcut: when
+  // set, it is normalized to `(sliding_window - 1, 0)`, i.e. causal
+  // sliding over the most recent `sliding_window` tokens.  When both
+  // forms are supplied the normalized values must agree.  Callers may
+  // use whichever form is more natural; the kernel only sees the
+  // resolved pair.
   FlashAttention(const Tensor query, const Tensor key, const Tensor value,
                  std::optional<Tensor> cu_seqlens_q,
                  std::optional<Tensor> cu_seqlens_kv,
                  std::optional<Tensor> block_table, int64_t num_heads,
                  int64_t num_kv_heads, int64_t head_size, double scale,
                  bool causal, int64_t window_left, int64_t window_right,
-                 int64_t block_size, Tensor output)
+                 int64_t block_size, Tensor output,
+                 std::optional<int64_t> sliding_window = std::nullopt)
       : num_tokens_{query.size(0)},
         num_heads_{num_heads},
         num_kv_heads_{num_kv_heads},
         head_size_{head_size},
         scale_{scale},
         causal_{causal},
-        window_left_{window_left},
-        window_right_{window_right},
+        window_left_{resolveWindowLeft(window_left, sliding_window)},
+        window_right_{resolveWindowRight(window_right, sliding_window)},
         block_size_{block_size},
         dtype_{query.dtype()},
         query_shape_{query.shape()},
@@ -48,21 +56,105 @@ class FlashAttention : public Operator<FlashAttention> {
         has_cu_seqlens_kv_{cu_seqlens_kv.has_value()},
         has_block_table_{block_table.has_value()} {
     assert(num_heads % num_kv_heads == 0 &&
-           "`FlashAttention` requires num_heads divisible by num_kv_heads");
+           "`FlashAttention` requires `num_heads` divisible by `num_kv_heads`");
     assert(query.ndim() == 3 &&
            "`FlashAttention` requires query to be 3D [T, N, D]");
+    assert(num_heads == query.size(1) &&
+           "`FlashAttention` requires `num_heads` to match query shape");
+    assert(head_size == query.size(2) &&
+           "`FlashAttention` requires `head_size` to match query shape");
+    assert(key.dtype() == dtype_ && value.dtype() == dtype_ &&
+           output.dtype() == dtype_ &&
+           "`FlashAttention` requires `query`, `key`, `value`, and `output` "
+           "same dtype");
+    assert(output.shape() == query.shape() &&
+           "`FlashAttention` requires `output` to match query shape");
+    assert(query.stride(-1) == 1 && key.stride(-1) == 1 &&
+           value.stride(-1) == 1 && output.stride(-1) == 1 &&
+           "`FlashAttention` requires contiguous last dimension");
+    assert(std::isfinite(scale_) && "`FlashAttention` requires finite `scale`");
+
+    if (has_block_table_) {
+      assert(key.ndim() == 4 && value.ndim() == 4 &&
+             "`FlashAttention` with `block_table` requires paged `key` / "
+             "`value` to be `[num_blocks, block_size, heads, dim]`");
+      assert(key.shape() == value.shape() &&
+             "`FlashAttention` requires `key` and `value` same shape");
+      assert(key.size(1) == static_cast<Tensor::Size>(block_size) &&
+             "`FlashAttention` requires `block_size` to match paged cache");
+      assert(key.size(2) == static_cast<Tensor::Size>(num_kv_heads) &&
+             "`FlashAttention` requires `num_kv_heads` to match `key`");
+      assert(key.size(3) == static_cast<Tensor::Size>(head_size) &&
+             "`FlashAttention` requires `head_size` to match `key`");
+      assert(block_table->ndim() == 2 &&
+             "`FlashAttention` requires `block_table` to be 2D");
+      assert(block_table->dtype() == DataType::kInt32 &&
+             "`FlashAttention` requires `block_table` to be `int32`");
+    } else {
+      assert(key.ndim() == 3 && value.ndim() == 3 &&
+             "`FlashAttention` requires `key` / `value` to be "
+             "`[T, heads, dim]`");
+      assert(key.shape() == value.shape() &&
+             "`FlashAttention` requires `key` and `value` same shape");
+      assert(key.size(1) == static_cast<Tensor::Size>(num_kv_heads) &&
+             "`FlashAttention` requires `num_kv_heads` to match `key`");
+      assert(key.size(2) == static_cast<Tensor::Size>(head_size) &&
+             "`FlashAttention` requires `head_size` to match `key`");
+    }
+
+    if (cu_seqlens_q.has_value()) {
+      assert(cu_seqlens_q->ndim() == 1 &&
+             "`FlashAttention` requires `cu_seqlens_q` to be 1D");
+      assert((cu_seqlens_q->dtype() == DataType::kInt32 ||
+              cu_seqlens_q->dtype() == DataType::kInt64) &&
+             "`FlashAttention` requires `cu_seqlens_q` to be `int32` or "
+             "`int64`");
+    }
+
+    if (cu_seqlens_kv.has_value()) {
+      assert(cu_seqlens_kv->ndim() == 1 &&
+             "`FlashAttention` requires `cu_seqlens_kv` to be 1D");
+      assert((cu_seqlens_kv->dtype() == DataType::kInt32 ||
+              cu_seqlens_kv->dtype() == DataType::kInt64) &&
+             "`FlashAttention` requires `cu_seqlens_kv` to be `int32` or "
+             "`int64`");
+    }
   }
 
-  virtual void operator()(const Tensor query, const Tensor key,
-                          const Tensor value,
-                          std::optional<Tensor> cu_seqlens_q,
-                          std::optional<Tensor> cu_seqlens_kv,
-                          std::optional<Tensor> block_table, int64_t num_heads,
-                          int64_t num_kv_heads, int64_t head_size, double scale,
-                          bool causal, int64_t window_left,
-                          int64_t window_right, int64_t block_size,
-                          Tensor output) const = 0;
+  virtual void operator()(
+      const Tensor query, const Tensor key, const Tensor value,
+      std::optional<Tensor> cu_seqlens_q, std::optional<Tensor> cu_seqlens_kv,
+      std::optional<Tensor> block_table, int64_t num_heads,
+      int64_t num_kv_heads, int64_t head_size, double scale, bool causal,
+      int64_t window_left, int64_t window_right, int64_t block_size,
+      Tensor output,
+      std::optional<int64_t> sliding_window = std::nullopt) const = 0;
 
+ private:
+  // Normalize the window representation.  If both the explicit pair and
+  // `sliding_window` are supplied, assert the pair matches the derived
+  // `(sliding_window - 1, 0)` causal-sliding window.
+  static int64_t resolveWindowLeft(int64_t window_left,
+                                   std::optional<int64_t> sliding_window) {
+    if (!sliding_window.has_value()) return window_left;
+    int64_t derived = sliding_window.value() - 1;
+    assert(
+        (window_left == -1 || window_left == derived) &&
+        "`FlashAttention`: `window_left` inconsistent with `sliding_window`");
+    return derived;
+  }
+
+  static int64_t resolveWindowRight(int64_t window_right,
+                                    std::optional<int64_t> sliding_window) {
+    if (!sliding_window.has_value()) return window_right;
+    assert(
+        (window_right == -1 || window_right == 0) &&
+        "`FlashAttention`: `window_right` inconsistent with `sliding_window` "
+        "(vLLM sliding_window implies right=0)");
+    return 0;
+  }
+
+ public:
  protected:
   Tensor::Size num_tokens_{0};
 
