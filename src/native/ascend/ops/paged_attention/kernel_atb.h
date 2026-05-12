@@ -10,9 +10,9 @@
 #include <vector>
 
 #include "acl/acl.h"
-#include "ascend/atb_common_.h"
-#include "ascend/common.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/atb_common_.h"
+#include "native/ascend/common.h"
+#include "native/ascend/workspace_pool_.h"
 #include "atb/context.h"
 #include "atb/infer_op_params.h"
 #include "atb/operation.h"

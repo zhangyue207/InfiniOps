@@ -6,8 +6,8 @@
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnnop/aclnn_embedding.h"
-#include "ascend/common.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/common.h"
+#include "native/ascend/workspace_pool_.h"
 #include "base/embedding.h"
 #include "operator.h"
 

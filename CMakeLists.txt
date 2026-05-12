@@ -18,7 +18,7 @@ option(WITH_ASCEND "Enable Ascend backend" OFF)
 
 option(WITH_TORCH "Enable PyTorch C++ backend" OFF)
 
-# Custom `AscendC` kernels under `src/ascend/custom/`.  `ON` by default
+# Custom `AscendC` kernels under `src/native/ascend/custom/`.  `ON` by default
 # so CI and routine dev builds always exercise `implementation_index=1/2`
 # for `RmsNorm` / `AddRmsNorm`.  Gated by `WITH_ASCEND` in
 # `src/CMakeLists.txt` — non-Ascend builds ignore it.  Pass
@@ -26,7 +26,7 @@ option(WITH_TORCH "Enable PyTorch C++ backend" OFF)
 # machines where the custom kernels aren't needed.
 #
 # When `ON`, `src/CMakeLists.txt` drives the standalone
-# `src/ascend/custom/build.sh` via `execute_process` at configure time
+# `src/native/ascend/custom/build.sh` via `execute_process` at configure time
 # (sidesteps a `CANN` `extract_host_stub.py` path bug that breaks
 # in-tree `ascendc_library()` under `scikit-build-core` temp-dir builds)
 # and links the produced `libno_workspace_kernel.a` into the `ops`

@@ -7,8 +7,8 @@
 #include "aclnn/aclnn_base.h"
 #include "aclnn_copy.h"
 #include "aclnnop/aclnn_swi_glu.h"
-#include "ascend/common.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/common.h"
+#include "native/ascend/workspace_pool_.h"
 #include "base/silu_and_mul.h"
 #include "operator.h"
 

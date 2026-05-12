@@ -7,7 +7,7 @@
 
 #include "acl/acl.h"
 #include "aclnn/acl_meta.h"
-#include "ascend/common.h"
+#include "native/ascend/common.h"
 #include "data_type.h"
 #include "tensor.h"
 

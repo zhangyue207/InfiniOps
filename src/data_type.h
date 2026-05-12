@@ -13,8 +13,8 @@ namespace infini::ops {
 
 // Element-type tag shared across the project.  Values are assigned
 // explicitly because they are part of the ABI between the host-side
-// launcher wrappers (e.g. `src/ascend/rms_norm/kernel_custom.h`) and the
-// `aclrtlaunch_*` device kernels under `src/ascend/custom/**/op_kernel/`
+// launcher wrappers (e.g. `src/native/ascend/rms_norm/kernel_custom.h`) and the
+// `aclrtlaunch_*` device kernels under `src/native/ascend/custom/**/op_kernel/`
 // — the launcher forwards `static_cast<int64_t>(input.dtype())` and the
 // kernel dispatches on it.  Reordering entries would silently break that
 // ABI.

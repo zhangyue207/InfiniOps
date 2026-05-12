@@ -8,8 +8,8 @@
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnnop/aclnn_rope_with_sin_cos_cache.h"
-#include "ascend/common.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/common.h"
+#include "native/ascend/workspace_pool_.h"
 #include "base/rotary_embedding.h"
 #include "operator.h"
 

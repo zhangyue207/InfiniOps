@@ -6,8 +6,8 @@
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnn_rms_norm.h"
-#include "ascend/common.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/common.h"
+#include "native/ascend/workspace_pool_.h"
 #include "base/rms_norm.h"
 #include "operator.h"
 
@@ -95,6 +95,6 @@ class Operator<RmsNorm, Device::Type::kAscend> : public RmsNorm {
 
 }  // namespace infini::ops
 
-#include "ascend/rms_norm/kernel_custom.h"
+#include "native/ascend/ops/rms_norm/kernel_custom.h"
 
 #endif

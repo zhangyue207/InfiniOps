@@ -10,9 +10,9 @@
 #include <optional>
 
 #include "acl/acl.h"
-#include "ascend/scaled_softmax/kernel.h"
-#include "ascend/topk_topp_sampling/kernel_atb.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/ops/scaled_softmax/kernel.h"
+#include "native/ascend/ops/topk_topp_sampling/kernel_atb.h"
+#include "native/ascend/workspace_pool_.h"
 #include "base/top_k_top_p_sampler.h"
 #include "data_type.h"
 #include "operator.h"

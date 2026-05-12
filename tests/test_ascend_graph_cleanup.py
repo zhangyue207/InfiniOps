@@ -12,7 +12,7 @@ def test_deferred_acl_cleanup_scope_runs_deferred_callbacks(tmp_path):
             #include <cassert>
             #include <vector>
 
-            #include "ascend/graph_cleanup_.h"
+            #include "native/ascend/ops/graph_cleanup_.h"
 
             int main() {
               using infini::ops::ascend::DeferredAclCleanupScope;
@@ -64,7 +64,7 @@ def test_deferred_acl_cleanup_scope_can_release_callbacks(tmp_path):
             #include <cassert>
             #include <vector>
 
-            #include "ascend/graph_cleanup_.h"
+            #include "native/ascend/ops/graph_cleanup_.h"
 
             int main() {
               using infini::ops::ascend::DeferredAclCleanupScope;

@@ -5,8 +5,8 @@
 #include "aclnn/aclnn_base.h"
 #include "aclnn_mul.h"
 #include "aclnn_silu.h"
-#include "ascend/common.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/common.h"
+#include "native/ascend/workspace_pool_.h"
 #include "base/swiglu.h"
 #include "data_type.h"
 #include "operator.h"
@@ -104,6 +104,6 @@ class Operator<Swiglu, Device::Type::kAscend, 0> : public Swiglu {
 
 }  // namespace infini::ops
 
-#include "ascend/swiglu/kernel_fused.h"
+#include "native/ascend/ops/swiglu/kernel_fused.h"
 
 #endif

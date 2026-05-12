@@ -11,8 +11,8 @@
 #include "aclnn/aclnn_base.h"
 #include "aclnnop/aclnn_apply_rotary_pos_emb_v2.h"
 #include "aclnnop/aclnn_index_select.h"
-#include "ascend/common.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/common.h"
+#include "native/ascend/workspace_pool_.h"
 #include "base/rotary_embedding.h"
 #include "operator.h"
 

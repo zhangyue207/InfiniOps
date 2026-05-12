@@ -623,7 +623,7 @@ def test_rotary_embedding_inplace(implementation_index, dtype, rtol, atol, devic
 def _build_pre_gathered_cache(cos_sin_cache, positions, head_size, is_neox_style):
     """Build the `[2 * T, head_size]` pre-gathered cache the kernel expects.
 
-    Layout (see `src/ascend/rotary_embedding/kernel.h` pre-gathered branch):
+    Layout (see `src/native/ascend/rotary_embedding/kernel.h` pre-gathered branch):
       - rows `0..T-1`: neox-expanded cos for each token (row `t` holds the
         cos values for `positions[t]`, broadcast to full `head_size`).
       - rows `T..2T-1`: neox-expanded sin, same indexing.

@@ -7,8 +7,8 @@
 #include "aclnn/aclnn_base.h"
 #include "aclnn_add.h"
 #include "aclnn_rms_norm.h"
-#include "ascend/common.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/common.h"
+#include "native/ascend/workspace_pool_.h"
 #include "base/add_rms_norm.h"
 #include "operator.h"
 

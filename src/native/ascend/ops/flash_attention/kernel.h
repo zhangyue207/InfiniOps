@@ -8,9 +8,9 @@
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnnop/aclnn_fused_infer_attention_score_v4.h"
-#include "ascend/common.h"
-#include "ascend/graph_cleanup_.h"
-#include "ascend/workspace_pool_.h"
+#include "native/ascend/common.h"
+#include "native/ascend/ops/graph_cleanup_.h"
+#include "native/ascend/workspace_pool_.h"
 #include "base/flash_attention.h"
 #include "operator.h"
 
